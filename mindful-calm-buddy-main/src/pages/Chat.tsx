@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { SendHorizonal, Bot, User, LoaderCircle } from "lucide-react";
+import { SendHorizonal, Bot, User, LoaderCircle, Video, VideoOff, Smile, Frown, Meh } from "lucide-react";
 import axios from "axios";
 import { motion, AnimatePresence } from "framer-motion";
+import Webcam from "react-webcam"; // Import the webcam component
 
 // Define the structure for a chat message
 interface Message {
@@ -14,13 +15,19 @@ interface Message {
   sender: "user" | "bot";
 }
 
+// Emotions your model can predict (adjust as needed)
+type Emotion = "happy" | "sad" | "anxious" | "neutral" | "unknown" | "angry" | "disgust" | "scared" | "surprised" | "no_face_detected" | "error";
+
 const Chat = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isWebcamOn, setIsWebcamOn] = useState(true); // State to control webcam
+  const [currentEmotion, setCurrentEmotion] = useState<Emotion>("neutral"); // New state for emotion
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const webcamRef = useRef<Webcam>(null); // Ref to access the webcam
 
-  // The address of your local Python backend server
+  // Your local Python backend server address
   const BACKEND_URL = "http://127.0.0.1:5000/chat";
 
   // Automatically scroll to the bottom when new messages are added
@@ -33,21 +40,15 @@ const Chat = () => {
     }
   }, [messages]);
   
-  // Send the first message automatically to get the bot's greeting
+  // Set the initial greeting message
   useEffect(() => {
-    const getInitialGreeting = async () => {
-        setIsLoading(true);
-        try {
-            const response = await axios.post(BACKEND_URL, { message: "start_conversation" });
-            setMessages([{ id: Date.now(), text: response.data.reply, sender: "bot" }]);
-        } catch (error) {
-            console.error("Error fetching initial greeting:", error);
-            setMessages([{ id: Date.now(), text: "Sorry, I'm having trouble connecting. Please make sure the backend server is running.", sender: "bot" }]);
-        } finally {
-            setIsLoading(false);
-        }
-    };
-    getInitialGreeting();
+    setMessages([
+      {
+        id: Date.now(),
+        text: "Hello! I'm Exam Ease. I see you've enabled your camera, which can help me understand how you're feeling. What's on your mind today?",
+        sender: "bot",
+      },
+    ]);
   }, []);
 
   const handleSend = async () => {
@@ -58,19 +59,34 @@ const Chat = () => {
     setInput("");
     setIsLoading(true);
 
+    // --- NEW: Capture Image ---
+    let imageSrc = null;
+    if (isWebcamOn && webcamRef.current) {
+      // Get a base64 screenshot from the webcam
+      imageSrc = webcamRef.current.getScreenshot();
+    }
+    
     try {
-      // Send the user's message to the backend
+      // Send both the user's message and the image to the backend
       const response = await axios.post(BACKEND_URL, {
         message: input,
+        image: imageSrc, // Send the image data
       });
+
+      // --- NEW: Receive both reply and emotion ---
+      const botReplyText = response.data.reply;
+      const detectedEmotion = response.data.emotion as Emotion;
 
       const botMessage: Message = {
         id: Date.now() + 1,
-        text: response.data.reply,
+        text: botReplyText,
         sender: "bot",
       };
       setMessages((prevMessages) => [...prevMessages, botMessage]);
+      setCurrentEmotion(detectedEmotion); // Update the current emotion state
+
     } catch (error) {
+      // This block runs if the server connection fails
       console.error("Error sending message:", error);
       const errorMessage: Message = {
         id: Date.now() + 1,
@@ -78,6 +94,7 @@ const Chat = () => {
         sender: "bot",
       };
       setMessages((prevMessages) => [...prevMessages, errorMessage]);
+      setCurrentEmotion("unknown");
     } finally {
       setIsLoading(false);
     }
@@ -89,12 +106,53 @@ const Chat = () => {
     }
   };
 
+  // Helper function to render an icon based on the detected emotion
+  const EmotionDisplay = () => {
+    switch (currentEmotion) {
+      case "happy":
+        return <Smile className="h-4 w-4 text-green-500" />;
+      case "sad":
+      case "anxious":
+      case "scared":
+      case "disgust":
+        return <Frown className="h-4 w-4 text-blue-500" />;
+      case "angry":
+        return <Frown className="h-4 w-4 text-red-500" />;
+      default:
+        return <Meh className="h-4 w-4 text-gray-400" />;
+    }
+  };
+
   return (
     <div className="flex flex-col h-screen bg-background">
-      <header className="border-b p-4 shadow-sm">
-        <h1 className="text-xl font-bold text-foreground">Exam Ease Chat</h1>
-        <p className="text-sm text-muted-foreground">Your personal AI buddy for managing exam stress</p>
+      <header className="border-b p-4 shadow-sm flex justify-between items-center">
+        <div>
+          <h1 className="text-xl font-bold text-foreground">Exam Ease Chat</h1>
+          <p className="text-sm text-muted-foreground">Your personal AI buddy for managing exam stress</p>
+        </div>
+        <div className="flex items-center gap-2">
+            <Button onClick={() => setIsWebcamOn(!isWebcamOn)} variant="outline" size="icon" className="mr-4">
+              {isWebcamOn ? <VideoOff className="h-4 w-4" /> : <Video className="h-4 w-4" />}
+            </Button>
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <EmotionDisplay />
+              <span className="capitalize">{currentEmotion}</span>
+            </div>
+        </div>
       </header>
+
+      {/* --- NEW: Webcam View --- */}
+      {isWebcamOn && (
+        <div className="relative w-full flex justify-center bg-black">
+          <Webcam
+            audio={false}
+            ref={webcamRef}
+            screenshotFormat="image/jpeg"
+            className="w-full max-w-xs h-auto rounded-lg"
+            mirrored={true}
+          />
+        </div>
+      )}
 
       <main className="flex-1 overflow-hidden">
         <ScrollArea className="h-full p-4" ref={scrollAreaRef}>
@@ -136,18 +194,18 @@ const Chat = () => {
             </AnimatePresence>
             {isLoading && (
                <motion.div
-                  layout
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="flex items-start gap-4"
-                >
-                <Avatar className="w-8 h-8 border">
-                  <AvatarFallback><Bot size={18} /></AvatarFallback>
-                </Avatar>
-                <div className="bg-muted text-muted-foreground rounded-2xl px-4 py-3 rounded-bl-none flex items-center">
-                    <LoaderCircle className="animate-spin w-5 h-5" />
-                </div>
-              </motion.div>
+                 layout
+                 initial={{ opacity: 0, y: 20 }}
+                 animate={{ opacity: 1, y: 0 }}
+                 className="flex items-start gap-4"
+               >
+                 <Avatar className="w-8 h-8 border">
+                   <AvatarFallback><Bot size={18} /></AvatarFallback>
+                 </Avatar>
+                 <div className="bg-muted text-muted-foreground rounded-2xl px-4 py-3 rounded-bl-none flex items-center">
+                     <LoaderCircle className="animate-spin w-5 h-5" />
+                 </div>
+               </motion.div>
             )}
           </div>
         </ScrollArea>
@@ -179,4 +237,3 @@ const Chat = () => {
 };
 
 export default Chat;
-
